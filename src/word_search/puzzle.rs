@@ -19,6 +19,7 @@ type Offset = [isize; 2];
 #[derive(Clone)]
 pub struct Puzzle {
     pub words: Vec<String>,
+    pub expansion: f32,
     pub grid: Grid,
     pub bounds: Bounds,
     pub placements: BTreeMap<String, Placement>,
@@ -40,6 +41,8 @@ pub struct Placement {
     pub direction: Direction,
     pub intersection_count: usize,
     pub adjacent_count: usize,
+    pub size_rank: usize,
+    pub adjacent_rank: usize,
     pub bounds: Bounds,
 }
 
@@ -68,7 +71,7 @@ pub enum Direction {
 }
 
 impl Puzzle {
-    pub fn new(words: &Vec<String>) -> Self {
+    pub fn new(words: &Vec<String>, expansion: f32) -> Self {
         debug_assert!(!words.is_empty());
         let words = words.iter().map(|word| word.trim().to_lowercase()).collect::<Vec<_>>();
         let size = words.iter().map(|word| word.len()).max().unwrap();
@@ -79,6 +82,7 @@ impl Puzzle {
         let y_min = x_min;
         Self {
             words,
+            expansion,
             grid: Self::create_grid(),
             bounds: Bounds::new(Position::new(x_min, y_min), Position::new(x_max, y_max)),
             placements: Default::default(),
@@ -99,7 +103,7 @@ impl Puzzle {
         grid
     }
 
-    pub fn find_best_puzzle(words: &Vec<String>) -> Option<Self> {
+    pub fn find_best_puzzle(words: &Vec<String>, expansion: f32) -> Option<Self> {
         let try_count_max = 10;
         let mut try_count = 1;
         let start_time = Instant::now();
@@ -107,9 +111,10 @@ impl Puzzle {
         let mut best_size = usize::max_value();
         let mut sizes = vec![];
         loop {
-            let mut puzzle = Self::new(words);
+            let mut puzzle = Self::new(words, expansion);
             puzzle.create();
-            puzzle.print_all();
+            // puzzle.print_all();
+            puzzle.print_puzzle();
             let puzzle_size = puzzle.bounds.get_size();
             sizes.push(puzzle_size);
             if puzzle_size < best_size {
@@ -138,13 +143,14 @@ impl Puzzle {
         self.words.sort_by(|a, b| a.len().cmp(&b.len()).reverse());
         let mut words = self.words.clone();
         //bg!(&self.words);
-        self.place_first_word(words.remove(0));
+        // self.place_first_word(words.remove(0));
         while !words.is_empty() {
             self.place_word(words.remove(0));
         }
 
     }
 
+    /*
     fn place_first_word(&mut self, word: String) {
         let midpoint = self.bounds.get_midpoint();
         let direction = Direction::random();
@@ -161,6 +167,7 @@ impl Puzzle {
         let placement = Placement::new(position, direction, 0, 0, self.bounds.clone());
         self.apply_word_placement(word, placement);
     }
+    */
 
     fn place_word(&mut self, word: String) {
 
@@ -220,7 +227,30 @@ impl Puzzle {
                     }
                 }
             }
+            let mut chosen_placement_index = 0;
             if placements.len() > 1 {
+                // Set the size rankings. The smallest sizes go first and get the smallest rank
+                // numbers.
+                placements.shuffle(&mut thread_rng());
+                placements.sort_by(|a, b| a.bounds.get_size().cmp(&b.bounds.get_size()));
+                placements.iter_mut().enumerate().for_each(|(i, placement)| placement.size_rank = i);
+
+                // Set the adjacent count rankings. The _highest_ adjacent counts go first and get
+                // the smallest rank numbers.
+                placements.shuffle(&mut thread_rng());
+                placements.sort_by(|a, b| a.adjacent_count.cmp(&b.adjacent_count).reverse());
+                placements.iter_mut().enumerate().for_each(|(i, placement)| placement.adjacent_rank = i);
+
+                // Sort by the combined ranks.
+                placements.shuffle(&mut thread_rng());
+                placements.sort_by(|a, b| (a.size_rank + a.adjacent_rank).cmp(&(b.size_rank + &b.adjacent_rank)));
+
+                chosen_placement_index = ((placements.len() as f32 - 1.0) * self.expansion).floor() as usize;
+                /*
+                placements.shuffle(&mut thread_rng());
+                placements.sort_by(|a, b| a.bounds.get_size().cmp(&b.bounds.get_size()));
+                chosen_placement_index = ((placements.len() as f32 - 1.0) * self.expansion).floor() as usize;
+
                 let adjacent_count_min = placements.iter().map(|placement| placement.adjacent_count).min().unwrap();
                 placements = placements.drain_filter(|placement| placement.adjacent_count == adjacent_count_min).collect();
                 debug_assert!(!placements.is_empty());
@@ -228,12 +258,12 @@ impl Puzzle {
                 let size_required_min = placements.iter().map(|placement| placement.bounds.get_size()).min().unwrap();
                 placements = placements.drain_filter(|placement| placement.bounds.get_size() == size_required_min).collect();
                 debug_assert!(!placements.is_empty());
-
+                */
             }
-            if placements.len() > 1 {
-                placements.shuffle(&mut thread_rng());
-            }
-            self.apply_word_placement(word, placements.remove(0));
+            // if placements.len() > 1 {
+            //     placements.shuffle(&mut thread_rng());
+            // }
+            self.apply_word_placement(word, placements.remove(chosen_placement_index));
         // }
     }
     
@@ -455,6 +485,8 @@ impl Placement {
             direction,
             intersection_count,
             adjacent_count,
+            size_rank: 0,
+            adjacent_rank: 0,
             bounds,
         }
     }
@@ -462,7 +494,10 @@ impl Placement {
 
 impl Display for Placement {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        write!(f, "[Placement: position = '{}'; direction = {}; intersection_count = {}; {}]", self.position, self.direction, self.intersection_count, self.bounds)
+        write!(f, "[Placement: position = '{}'; direction = {}; intersection_count = {}; size_rank = {}; adjacent_rank = {}; {}]",
+               self.position, self.direction, self.intersection_count,
+               util::format::format_count(self.size_rank),
+               util::format::format_count(self.adjacent_rank), self.bounds)
     }
 }
 
@@ -653,5 +688,6 @@ pub fn vec_str_to_strings(list: &Vec<&str>) -> Vec<String> {
 pub fn main() {
     let words = word_list::WORDS_1;
     // let words = word_list::ALL_SECOND_GRADE;
-    Puzzle::find_best_puzzle(&slice_str_to_strings(&words.to_vec()));
+    let expansion = 0.2;
+    Puzzle::find_best_puzzle(&slice_str_to_strings(&words.to_vec()), expansion);
 }
