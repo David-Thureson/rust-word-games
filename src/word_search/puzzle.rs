@@ -39,6 +39,7 @@ pub struct Placement {
     pub position: Position,
     pub direction: Direction,
     pub intersection_count: usize,
+    pub adjacent_count: usize,
     pub bounds: Bounds,
 }
 
@@ -157,7 +158,7 @@ impl Puzzle {
             Direction::W => Position::new(self.bounds.get_x_max(), midpoint.y),
             Direction::NW => Position::new(self.bounds.get_x_max(),self.bounds.get_y_max()),
         };
-        let placement = Placement::new(position, direction, 0, self.bounds.clone());
+        let placement = Placement::new(position, direction, 0, 0, self.bounds.clone());
         self.apply_word_placement(word, placement);
     }
 
@@ -220,9 +221,14 @@ impl Puzzle {
                 }
             }
             if placements.len() > 1 {
+                let adjacent_count_min = placements.iter().map(|placement| placement.adjacent_count).min().unwrap();
+                placements = placements.drain_filter(|placement| placement.adjacent_count == adjacent_count_min).collect();
+                debug_assert!(!placements.is_empty());
+
                 let size_required_min = placements.iter().map(|placement| placement.bounds.get_size()).min().unwrap();
                 placements = placements.drain_filter(|placement| placement.bounds.get_size() == size_required_min).collect();
                 debug_assert!(!placements.is_empty());
+
             }
             if placements.len() > 1 {
                 placements.shuffle(&mut thread_rng());
@@ -235,6 +241,7 @@ impl Puzzle {
         //rintln!("\nStarting try_placement().");
         //bg!(word, char_index, position.to_string(), direction.to_string());
         let mut intersection_count = 0;
+        let mut adjacent_count = 0;
         let mut bounds = self.bounds.clone();
         let position_new_word = position.back_to_word_start_optional(char_index, direction, Self::get_field_size());
         if position_new_word.is_none() {
@@ -256,11 +263,16 @@ impl Puzzle {
             }
             if cell.char == char {
                 intersection_count += 1;
+            } else {
+                // If we use this placement we'll be adding a character at this position. Count the
+                // number of filled cells "beside" this one. For instance if we're going N or S, it
+                // would be the cells to the E and W.
+                adjacent_count += self.get_adjacent_count(&pos, direction);
             }
             bounds.apply_position(&pos);
             pos.apply_offset(&offset);
         }
-        let placement = Placement::new(position_new_word, direction.clone(), intersection_count, bounds);
+        let placement = Placement::new(position_new_word, direction.clone(), intersection_count, adjacent_count, bounds);
         //bg!(&placement.to_string());
         //rintln!("Leaving try_placement().\n");
         Some(placement)
@@ -274,6 +286,22 @@ impl Puzzle {
         let y_end = position.y as isize + (word_length * offset[1]);
         position.x < field_size && x_end >= 0 && x_end < field_size as isize
             && position.y < field_size && y_end >= 0 && y_end < field_size as isize
+    }
+
+    fn get_adjacent_count(&self, position: &Position, direction: &Direction) -> usize {
+        let dir_this = direction.get_variant_name().to_string();
+        let dir_opposite = direction.opposite().get_variant_name().to_string();
+        let mut count = 0;
+        for dir in DIRECTIONS.iter()
+                .filter(|dir| dir.get_variant_name().ne(dir_this.as_str()) && dir.get_variant_name().ne(dir_opposite.as_str())) {
+            let offset = dir.get_offset();
+            let mut pos = position.clone();
+            pos.apply_offset(&offset);
+            if self.get_cell(&pos).char != NO_CHAR {
+                count += 1;
+            }
+        }
+        count
     }
 
     fn apply_word_placement(&mut self, word: String, placement: Placement) {
@@ -421,11 +449,12 @@ impl Display for Cell {
 }
 
 impl Placement {
-    pub fn new(position: Position, direction: Direction, intersection_count: usize, bounds: Bounds) -> Self {
+    pub fn new(position: Position, direction: Direction, intersection_count: usize, adjacent_count: usize, bounds: Bounds) -> Self {
         Self {
             position,
             direction,
             intersection_count,
+            adjacent_count,
             bounds,
         }
     }
@@ -572,11 +601,21 @@ impl Direction {
         DIRECTIONS[index].clone()
     }
 
-}
+    pub fn opposite(&self) -> Self {
+        match self {
+            Direction::N => Direction::S,
+            Direction::NE => Direction::SW,
+            Direction::E => Direction::W,
+            Direction::SE => Direction::NW,
+            Direction::S => Direction::N,
+            Direction::SW => Direction::NE,
+            Direction::W => Direction::E,
+            Direction::NW => Direction::SE,
+        }
+    }
 
-impl Display for Direction {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        let dir_desc = match self {
+    pub fn get_variant_name(&self) -> &str {
+        match self {
             Direction::N => "N",
             Direction::NE => "NE",
             Direction::E => "E",
@@ -585,8 +624,21 @@ impl Display for Direction {
             Direction::SW => "SW",
             Direction::W => "W",
             Direction::NW => "NW",
-        };
-        write!(f, "{}", dir_desc)
+        }
+    }
+}
+
+impl PartialEq for Direction {
+    fn eq(&self, other: &Self) -> bool {
+        self.get_variant_name() == other.get_variant_name()
+    }
+}
+
+impl Eq for Direction {}
+
+impl Display for Direction {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(f, "{}", self.get_variant_name())
     }
 }
 
@@ -599,7 +651,7 @@ pub fn vec_str_to_strings(list: &Vec<&str>) -> Vec<String> {
 }
 
 pub fn main() {
-    // let words = word_list::WORDS_1;
-    let words = word_list::ALL_SECOND_GRADE;
+    let words = word_list::WORDS_1;
+    // let words = word_list::ALL_SECOND_GRADE;
     Puzzle::find_best_puzzle(&slice_str_to_strings(&words.to_vec()));
 }
