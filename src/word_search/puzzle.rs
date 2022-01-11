@@ -1,7 +1,6 @@
 use super::*;
 
-use std::time::Instant;
-use rand::thread_rng;
+use rand::{thread_rng, Rng};
 use rand::seq::SliceRandom;
 use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter};
@@ -9,9 +8,9 @@ use itertools::Itertools;
 
 const PUZZLE_SIZE_MAX: usize = 30;
 const FIELD_SIZE_MULT: usize = 2;
-const CREATE_SECONDS_MAX: usize = 10;
 const NO_CHAR: char = '-';
 const DIRECTIONS: [Direction; 8] = [Direction::N, Direction::NE, Direction::E, Direction::SE, Direction::S, Direction::SW, Direction::W, Direction::NW];
+const ASCII_A_LOWERCASE: u8 = 97;
 
 type Grid = Vec<Vec<Cell>>;
 type Offset = [isize; 2];
@@ -21,15 +20,17 @@ pub struct Puzzle {
     words: Vec<String>,
     expansion: f32,
     directions: Vec<Direction>,
+    is_random_filled: bool,
     grid: Grid,
     bounds: Bounds,
     placements: BTreeMap<String, Placement>,
-    char_map: BTreeMap<char, Vec<Position>>,
 }
 
 #[derive(Clone, Debug)]
 pub struct Cell {
     char: char,
+    word_count: usize,
+    is_word_start: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -67,6 +68,12 @@ pub enum Direction {
     NW,
 }
 
+pub enum ExcelStyle {
+    Density,
+    Hint,
+    Reveal,
+}
+
 impl Puzzle {
     pub fn new(words: &Vec<String>, expansion: f32) -> Self {
         debug_assert!(!words.is_empty());
@@ -81,10 +88,10 @@ impl Puzzle {
             words,
             expansion,
             directions: DIRECTIONS.iter().map(|x| x.clone()).collect(),
+            is_random_filled: false,
             grid: Self::create_grid(),
             bounds: Bounds::new(Position::new(x_min, y_min), Position::new(x_max, y_max)),
             placements: Default::default(),
-            char_map: Default::default(),
         }
     }
 
@@ -101,10 +108,8 @@ impl Puzzle {
         grid
     }
 
-    pub fn find_best_puzzle(words: &Vec<String>, expansion: f32, directions: Option<Vec<Direction>>) -> Option<Self> {
-        let try_count_max = 10;
+    pub fn find_best_puzzle(words: &Vec<String>, expansion: f32, directions: Option<Vec<Direction>>, try_count_max: usize) -> Self {
         let mut try_count = 1;
-        let start_time = Instant::now();
         let mut best_puzzle = None;
         let mut best_size = usize::max_value();
         let mut sizes = vec![];
@@ -121,10 +126,6 @@ impl Puzzle {
                 best_puzzle = Some(puzzle);
                 best_size = puzzle_size;
             }
-            let elapsed = (Instant::now() - start_time).as_secs();
-            if elapsed > CREATE_SECONDS_MAX as u64 {
-                break;
-            }
             try_count += 1;
             if try_count > try_count_max {
                 break;
@@ -132,7 +133,7 @@ impl Puzzle {
         }
         sizes.sort();
         dbg!(sizes);
-        best_puzzle
+        best_puzzle.unwrap()
     }
 
     fn create(&mut self) {
@@ -247,7 +248,7 @@ impl Puzzle {
     fn apply_word_placement(&mut self, word: String, placement: Placement) {
         let offset = placement.direction.get_offset();
         let mut pos = placement.position.clone();
-        for char in word.chars() {
+        for (char_index, char) in word.chars().enumerate() {
             self.bounds.apply_position(&pos);
             let cell = self.get_cell_mut(&pos);
             let found_char = cell.char;
@@ -256,14 +257,10 @@ impl Puzzle {
                 panic!("Trying to place word \"{}\" with {}. Conflicting character at {}: '{}'.",
                     &word, &placement, &pos, found_char);
             }
-            let mut add_to_char_map = false;
-            if cell.char != char {
-                cell.char = char;
-                add_to_char_map = true;
-            }
-            if add_to_char_map {
-                let char_map_entry = self.char_map.entry(char).or_insert(vec![]);
-                char_map_entry.push(pos.clone());
+            cell.char = char;
+            cell.word_count += 1;
+            if char_index == 0 {
+                cell.is_word_start = true;
             }
             pos.apply_offset(&offset);
         }
@@ -274,8 +271,16 @@ impl Puzzle {
         &self.grid[position.y][position.x]
     }
 
+    fn get_cell_xy(&self, x: usize, y: usize) -> &Cell {
+        &self.grid[y][x]
+    }
+
     fn get_cell_mut(&mut self, position: &Position) -> &mut Cell {
         &mut self.grid[position.y][position.x]
+    }
+
+    fn get_cell_mut_xy(&mut self, x: usize, y: usize) -> &mut Cell {
+        &mut self.grid[y][x]
     }
 
     pub fn get_char(&self, position: &Position) -> char {
@@ -291,22 +296,29 @@ impl Puzzle {
     }
 
     pub fn get_description_line(&self) -> String {
-        format!("Puzzle: word count = {}; size = {}; {}; placement count = {}; char map size = {}", self.words.len(), self.bounds.get_size(), &self.bounds, self.placements.len(), self.char_map.len())
+        format!("Puzzle: word count = {}; size = {}; {}; placement count = {}", self.words.len(), self.bounds.get_size(), &self.bounds, self.placements.len())
     }
 
-    pub fn print(&self, show_placements: bool, show_char_map: bool, show_puzzle: bool) {
+    pub fn random_fill_optional(&mut self) {
+        if !self.is_random_filled {
+            for y in self.bounds.get_y_min()..=self.bounds.get_y_max() {
+                for x in self.bounds.get_x_min()..=self.bounds.get_x_max() {
+                    let cell = self.get_cell_mut_xy(x, y);
+                    if cell.char == NO_CHAR {
+                        cell.char = random_char();
+                    }
+                }
+            }
+            self.is_random_filled = true;
+        }
+    }
+
+    pub fn print(&self, show_placements: bool, show_puzzle: bool) {
         println!("\n{}", self.get_description_line());
         if show_placements {
             println!("\tPlacements:");
             for (word, placement) in self.placements.iter() {
                 println!("\t\t\"{}\" at {}.", word, placement);
-            }
-        }
-        if show_char_map {
-            println!("\tChar Map:");
-            for (char, positions) in self.char_map.iter() {
-                let positions_desc = positions.iter().map(|pos| pos.to_string()).join(", ");
-                println!("\t\t\"{}\" at {}.", char, positions_desc);
             }
         }
         if show_puzzle {
@@ -315,7 +327,7 @@ impl Puzzle {
     }
 
     pub fn print_all(&self) {
-        self.print(true, true, true);
+        self.print(true, true);
     }
 
     pub fn print_puzzle(&self) {
@@ -328,12 +340,41 @@ impl Puzzle {
         }
         println!();
     }
+
+    pub fn print_for_excel(&mut self, style: ExcelStyle) {
+        self.random_fill_optional();
+        let offset_right = 100;
+        let extra_tabs = "\t".repeat(offset_right - self.bounds.get_x_size());
+        println!();
+        for y in self.bounds.get_y_min()..=self.bounds.get_y_max() {
+            let mut line_left_half = "".to_string();
+            let mut line_right_half = "".to_string();
+            for x in self.bounds.get_x_min()..=self.bounds.get_x_max() {
+                let cell = self.get_cell_xy(x, y);
+                line_left_half.push_str(&format!("{}\t", cell.char.to_uppercase()));
+                let right_part = match style {
+                    ExcelStyle::Density => cell.word_count.to_string(),
+                    ExcelStyle::Hint | ExcelStyle::Reveal => (match (cell.is_word_start, cell.word_count > 0) {
+                        (false, false) => "r",
+                        (false, true) => "w",
+                        (true, false) => panic!(),
+                        (true, true) => "sw",
+                    }).to_string(),
+                };
+                line_right_half.push_str(&format!("{}\t", right_part));
+            }
+            println!("{}{}{}", line_left_half, extra_tabs, line_right_half);
+        }
+        println!();
+    }
 }
 
 impl Cell {
     pub fn new() -> Self {
         Self {
             char: NO_CHAR,
+            word_count: 0,
+            is_word_start: false
         }
     }
 }
@@ -421,6 +462,11 @@ impl Bounds {
         let x_size = (self.get_x_max() - self.get_x_min()) + 1;
         let y_size = (self.get_y_max() - self.get_y_min()) + 1;
         x_size.max(y_size)
+    }
+
+    #[inline]
+    fn get_x_size(&self) -> usize {
+        (self.get_x_max() - self.get_x_min()) + 1
     }
 
     #[inline]
@@ -526,14 +572,22 @@ pub fn vec_str_to_strings(list: &Vec<&str>) -> Vec<String> {
     list.iter().map(|x| x.to_string()).collect()
 }
 
+pub fn random_char() -> char {
+    let ascii = thread_rng().gen_range(ASCII_A_LOWERCASE..ASCII_A_LOWERCASE + 26);
+    ascii as char
+}
+
 pub fn main() {
-    let words = word_list::WORDS_1;
-    // let words = word_list::ALL_SECOND_GRADE;
-    let expansion = 0.2;
-    // let directions = None;
+    // let words = word_list::WORDS_1;
+    // let words = word_list::WORDS_4;
+    let words = word_list::ALL_SECOND_GRADE;
+    let expansion = 0.3;
+    let directions = None;
+    let try_count_max = 1;
     // let directions = Some(vec![Direction::E, Direction::S]);
-    let directions = Some(vec![Direction::E, Direction::SE, Direction::S]);
+    // let directions = Some(vec![Direction::E, Direction::SE, Direction::S]);
     // let directions = Some(vec![Direction::NE, Direction::E, Direction::SE, Direction::S]);
     // let directions = Some(vec![Direction::NW]);
-    Puzzle::find_best_puzzle(&slice_str_to_strings(&words.to_vec()), expansion, directions);
+    let mut puzzle = Puzzle::find_best_puzzle(&slice_str_to_strings(&words.to_vec()), expansion, directions, try_count_max);
+    puzzle.print_for_excel(ExcelStyle::Reveal);
 }
