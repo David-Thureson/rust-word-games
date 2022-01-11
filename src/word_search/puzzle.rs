@@ -1,7 +1,7 @@
 use super::*;
 
 use std::time::Instant;
-use rand::{thread_rng, Rng};
+use rand::thread_rng;
 use rand::seq::SliceRandom;
 use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter};
@@ -18,12 +18,13 @@ type Offset = [isize; 2];
 
 #[derive(Clone)]
 pub struct Puzzle {
-    pub words: Vec<String>,
-    pub expansion: f32,
-    pub grid: Grid,
-    pub bounds: Bounds,
-    pub placements: BTreeMap<String, Placement>,
-    pub char_map: BTreeMap<char, Vec<Position>>,
+    words: Vec<String>,
+    expansion: f32,
+    directions: Vec<Direction>,
+    grid: Grid,
+    bounds: Bounds,
+    placements: BTreeMap<String, Placement>,
+    char_map: BTreeMap<char, Vec<Position>>,
 }
 
 #[derive(Clone, Debug)]
@@ -33,13 +34,13 @@ pub struct Cell {
 
 #[derive(Clone, Debug)]
 pub struct Placement {
-    pub position: Position,
-    pub direction: Direction,
-    pub intersection_count: usize,
-    pub adjacent_count: usize,
-    pub size_rank: usize,
-    pub adjacent_rank: usize,
-    pub bounds: Bounds,
+    position: Position,
+    direction: Direction,
+    intersection_count: usize,
+    adjacent_count: usize,
+    size_rank: usize,
+    adjacent_rank: usize,
+    bounds: Bounds,
 }
 
 #[derive(Clone, Debug)]
@@ -50,8 +51,8 @@ pub struct Position {
 
 #[derive(Clone, Debug)]
 pub struct Bounds {
-    pub top_left: Position,
-    pub bottom_right: Position,
+    top_left: Position,
+    bottom_right: Position,
 }
 
 #[derive(Clone, Debug)]
@@ -79,6 +80,7 @@ impl Puzzle {
         Self {
             words,
             expansion,
+            directions: DIRECTIONS.iter().map(|x| x.clone()).collect(),
             grid: Self::create_grid(),
             bounds: Bounds::new(Position::new(x_min, y_min), Position::new(x_max, y_max)),
             placements: Default::default(),
@@ -99,7 +101,7 @@ impl Puzzle {
         grid
     }
 
-    pub fn find_best_puzzle(words: &Vec<String>, expansion: f32) -> Option<Self> {
+    pub fn find_best_puzzle(words: &Vec<String>, expansion: f32, directions: Option<Vec<Direction>>) -> Option<Self> {
         let try_count_max = 10;
         let mut try_count = 1;
         let start_time = Instant::now();
@@ -108,6 +110,9 @@ impl Puzzle {
         let mut sizes = vec![];
         loop {
             let mut puzzle = Self::new(words, expansion);
+            if let Some(ref directions) = directions {
+                puzzle.directions = directions.clone();
+            }
             puzzle.create();
             puzzle.print_puzzle();
             let puzzle_size = puzzle.bounds.get_size();
@@ -145,7 +150,7 @@ impl Puzzle {
         for x in self.bounds.get_x_min()..=self.bounds.get_x_max() {
             for y in self.bounds.get_y_min()..=self.bounds.get_y_max() {
                 let position = Position::new(x, y);
-                for direction in DIRECTIONS.iter() {
+                for direction in self.directions.iter() {
                     if let Some(placement) = self.try_placement(&word, 0, &position, direction) {
                         placements.push(placement);
                     }
@@ -313,7 +318,7 @@ impl Puzzle {
         self.print(true, true, true);
     }
 
-    fn print_puzzle(&self) {
+    pub fn print_puzzle(&self) {
         println!();
         for y in self.bounds.get_y_min()..=self.bounds.get_y_max() {
             let line = (self.bounds.get_x_min()..=self.bounds.get_x_max()).into_iter()
@@ -340,7 +345,7 @@ impl Display for Cell {
 }
 
 impl Placement {
-    pub fn new(position: Position, direction: Direction, intersection_count: usize, adjacent_count: usize, bounds: Bounds) -> Self {
+    fn new(position: Position, direction: Direction, intersection_count: usize, adjacent_count: usize, bounds: Bounds) -> Self {
         Self {
             position,
             direction,
@@ -363,7 +368,7 @@ impl Display for Placement {
 }
 
 impl Position {
-    pub fn new(x: usize, y: usize) -> Self {
+    fn new(x: usize, y: usize) -> Self {
         assert!(x < PUZZLE_SIZE_MAX * FIELD_SIZE_MULT);
         assert!(y < PUZZLE_SIZE_MAX * FIELD_SIZE_MULT);
         Self {
@@ -373,22 +378,12 @@ impl Position {
     }
 
     #[inline]
-    pub fn apply_offset(&mut self, offset: &Offset) {
+    fn apply_offset(&mut self, offset: &Offset) {
         self.x = (self.x as isize + offset[0]) as usize;
         self.y = (self.y as isize + offset[1]) as usize;
     }
 
-    pub fn back_to_word_start(&self, char_index: usize, direction: &Direction) -> Self {
-        // We're starting at the proposed intersection of a new word with an existing word at some
-        // character in the new word. We need to return the position of the first character of the
-        // new word.
-        let offset = direction.get_offset();
-        let x = (self.x as isize - (char_index as isize * offset[0])) as usize;
-        let y = (self.y as isize - (char_index as isize * offset[1])) as usize;
-        Self::new(x, y)
-    }
-
-    pub fn back_to_word_start_optional(&self, char_index: usize, direction: &Direction, field_size: usize) -> Option<Self> {
+    fn back_to_word_start_optional(&self, char_index: usize, direction: &Direction, field_size: usize) -> Option<Self> {
         // We're starting at the proposed intersection of a new word with an existing word at some
         // character in the new word. We need to return the position of the first character of the
         // new word.
@@ -412,7 +407,7 @@ impl Display for Position {
 }
 
 impl Bounds {
-    pub fn new(top_left: Position, bottom_right: Position) -> Self {
+    fn new(top_left: Position, bottom_right: Position) -> Self {
         let bounds = Self {
             top_left,
             bottom_right
@@ -422,34 +417,34 @@ impl Bounds {
     }
 
     #[inline]
-    pub fn get_size(&self) -> usize {
+    fn get_size(&self) -> usize {
         let x_size = (self.get_x_max() - self.get_x_min()) + 1;
         let y_size = (self.get_y_max() - self.get_y_min()) + 1;
         x_size.max(y_size)
     }
 
     #[inline]
-    pub fn get_x_min(&self) -> usize {
+    fn get_x_min(&self) -> usize {
         self.top_left.x
     }
 
     #[inline]
-    pub fn get_x_max(&self) -> usize {
+    fn get_x_max(&self) -> usize {
         self.bottom_right.x
     }
 
     #[inline]
-    pub fn get_y_min(&self) -> usize {
+    fn get_y_min(&self) -> usize {
         self.top_left.y
     }
 
     #[inline]
-    pub fn get_y_max(&self) -> usize {
+    fn get_y_max(&self) -> usize {
         self.bottom_right.y
     }
 
     #[inline]
-    pub fn apply_position(&mut self, position: &Position) {
+    fn apply_position(&mut self, position: &Position) {
         self.top_left.x = self.top_left.x.min(position.x);
         self.bottom_right.x = self.bottom_right.x.max(position.x);
         self.top_left.y = self.top_left.y.min(position.y);
@@ -469,7 +464,7 @@ impl Display for Bounds {
 }
 
 impl Direction {
-    pub fn get_offset(&self) -> Offset {
+    fn get_offset(&self) -> Offset {
         match self {
             Direction::N => [0, -1],
             Direction::NE => [1, -1],
@@ -482,12 +477,7 @@ impl Direction {
         }
     }
 
-    pub fn random() -> Self {
-        let index = thread_rng().gen_range(0..8);
-        DIRECTIONS[index].clone()
-    }
-
-    pub fn opposite(&self) -> Self {
+    fn opposite(&self) -> Self {
         match self {
             Direction::N => Direction::S,
             Direction::NE => Direction::SW,
@@ -500,7 +490,7 @@ impl Direction {
         }
     }
 
-    pub fn get_variant_name(&self) -> &str {
+    fn get_variant_name(&self) -> &str {
         match self {
             Direction::N => "N",
             Direction::NE => "NE",
@@ -540,5 +530,10 @@ pub fn main() {
     let words = word_list::WORDS_1;
     // let words = word_list::ALL_SECOND_GRADE;
     let expansion = 0.2;
-    Puzzle::find_best_puzzle(&slice_str_to_strings(&words.to_vec()), expansion);
+    // let directions = None;
+    // let directions = Some(vec![Direction::E, Direction::S]);
+    let directions = Some(vec![Direction::E, Direction::SE, Direction::S]);
+    // let directions = Some(vec![Direction::NE, Direction::E, Direction::SE, Direction::S]);
+    // let directions = Some(vec![Direction::NW]);
+    Puzzle::find_best_puzzle(&slice_str_to_strings(&words.to_vec()), expansion, directions);
 }
