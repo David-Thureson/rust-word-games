@@ -29,6 +29,10 @@ pub struct Puzzle {
 #[derive(Clone, Debug)]
 pub struct Cell {
     char: char,
+    has_n_s: bool,
+    has_ne_sw: bool,
+    has_e_w: bool,
+    has_se_nw: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -109,10 +113,14 @@ impl Puzzle {
         loop {
             let mut puzzle = Self::new(words, expansion);
             puzzle.create();
+            // puzzle.print_all();
             puzzle.print_puzzle();
             let puzzle_size = puzzle.bounds.get_size();
             sizes.push(puzzle_size);
             if puzzle_size < best_size {
+                // let new_is_better = best_puzzle.map_or(true, |best_puzzle: Puzzle| best_puzzle.size > puzzle.size);
+                // let new_is_better = true;
+                // if new_is_better {
                 best_puzzle = Some(puzzle);
                 best_size = puzzle_size;
             }
@@ -134,13 +142,80 @@ impl Puzzle {
         self.words.shuffle(&mut thread_rng());
         self.words.sort_by(|a, b| a.len().cmp(&b.len()).reverse());
         let mut words = self.words.clone();
+        //bg!(&self.words);
+        // self.place_first_word(words.remove(0));
         while !words.is_empty() {
             self.place_word(words.remove(0));
         }
+
     }
 
+    /*
+    fn place_first_word(&mut self, word: String) {
+        let midpoint = self.bounds.get_midpoint();
+        let direction = Direction::random();
+        let position= match direction {
+            Direction::N => Position::new(midpoint.x, self.bounds.get_y_max()),
+            Direction::NE => Position::new(self.bounds.get_x_min(), self.bounds.get_y_max()),
+            Direction::E => Position::new(self.bounds.get_x_min(), midpoint.y),
+            Direction::SE => Position::new(self.bounds.get_x_min(), self.bounds.get_y_min()),
+            Direction::S => Position::new(midpoint.x, self.bounds.get_y_min()),
+            Direction::SW => Position::new(self.bounds.get_x_max(), self.bounds.get_y_min()),
+            Direction::W => Position::new(self.bounds.get_x_max(), midpoint.y),
+            Direction::NW => Position::new(self.bounds.get_x_max(),self.bounds.get_y_max()),
+        };
+        let placement = Placement::new(position, direction, 0, 0, self.bounds.clone());
+        self.apply_word_placement(word, placement);
+    }
+    */
+
     fn place_word(&mut self, word: String) {
-        // Try all possible placements.
+
+        /*
+        // First try to place the word on one or more intersections with existing words.
+        let mut placements = vec![];
+        for (char_index, char) in word.chars().enumerate() {
+            if let Some(positions) = self.char_map.get(&char) {
+                // This is a list of positions where this character already appears on the puzzle.
+                for position in positions.iter() {
+                    // let cell = self.get_cell(position);
+                    for direction in DIRECTIONS.iter() {
+                        if let Some(placement) = self.try_placement(&word, char_index, position, direction) {
+                            placements.push(placement);
+                        }
+                    }
+                }
+            }
+        }
+
+        if !placements.is_empty() {
+
+            // Keep the prospective placements with the most intersections.
+            let intersection_count_min = placements.iter().map(|placement| placement.intersection_count).min().unwrap();
+            let intersection_count_max = placements.iter().map(|placement| placement.intersection_count).max().unwrap();
+            if intersection_count_min != intersection_count_max {
+                placements = placements.drain_filter(|placement| placement.intersection_count == intersection_count_max).collect();
+            }
+            debug_assert!(!placements.is_empty());
+
+            // Of the remaining prospective placements, keep the ones with the smallest required size.
+            if placements.len() > 1 {
+                let size_required_min = placements.iter().map(|placement| placement.bounds.get_size()).min().unwrap();
+                placements = placements.drain_filter(|placement| placement.bounds.get_size() == size_required_min).collect();
+                debug_assert!(!placements.is_empty());
+            }
+
+            if placements.len() > 1 {
+                placements.shuffle(&mut thread_rng());
+            }
+
+            self.apply_word_placement(word, placements.remove(0));
+
+        } else {
+
+         */
+        // The intersections didn't work, meaning this word does not share any characters with
+        // existing words. So try all possible placements.
         let mut placements = vec![];
         for x in self.bounds.get_x_min()..=self.bounds.get_x_max() {
             for y in self.bounds.get_y_min()..=self.bounds.get_y_max() {
@@ -170,15 +245,31 @@ impl Puzzle {
             placements.shuffle(&mut thread_rng());
             placements.sort_by(|a, b| (a.size_rank + a.adjacent_rank).cmp(&(b.size_rank + &b.adjacent_rank)));
 
-            // Choose an entry from the top of the list (self.expansion is 0.0, as compact as
-            // passible), the end of the list (self.expansion is 1.0, as loose as possible), or
-            // somewhere in between.
             chosen_placement_index = ((placements.len() as f32 - 1.0) * self.expansion).floor() as usize;
+            /*
+            placements.shuffle(&mut thread_rng());
+            placements.sort_by(|a, b| a.bounds.get_size().cmp(&b.bounds.get_size()));
+            chosen_placement_index = ((placements.len() as f32 - 1.0) * self.expansion).floor() as usize;
+
+            let adjacent_count_min = placements.iter().map(|placement| placement.adjacent_count).min().unwrap();
+            placements = placements.drain_filter(|placement| placement.adjacent_count == adjacent_count_min).collect();
+            debug_assert!(!placements.is_empty());
+
+            let size_required_min = placements.iter().map(|placement| placement.bounds.get_size()).min().unwrap();
+            placements = placements.drain_filter(|placement| placement.bounds.get_size() == size_required_min).collect();
+            debug_assert!(!placements.is_empty());
+            */
         }
+        // if placements.len() > 1 {
+        //     placements.shuffle(&mut thread_rng());
+        // }
         self.apply_word_placement(word, placements.remove(chosen_placement_index));
+        // }
     }
-    
+
     fn try_placement(&self, word: &String, char_index: usize, position: &Position, direction: &Direction) -> Option<Placement> {
+        //rintln!("\nStarting try_placement().");
+        //bg!(word, char_index, position.to_string(), direction.to_string());
         let mut intersection_count = 0;
         let mut adjacent_count = 0;
         let mut bounds = self.bounds.clone();
@@ -188,6 +279,7 @@ impl Puzzle {
         }
         let position_new_word = position_new_word.unwrap();
         let mut pos = position_new_word.clone();
+        //bg!(&pos.to_string());
         if !self.is_placement_on_grid(word.len(), &pos, direction) {
             return None;
         }
@@ -203,13 +295,16 @@ impl Puzzle {
                 intersection_count += 1;
             } else {
                 // If we use this placement we'll be adding a character at this position. Count the
-                // number of filled cells touching this one.
+                // number of filled cells "beside" this one. For instance if we're going N or S, it
+                // would be the cells to the E and W.
                 adjacent_count += self.get_adjacent_count(&pos, direction);
             }
             bounds.apply_position(&pos);
             pos.apply_offset(&offset);
         }
         let placement = Placement::new(position_new_word, direction.clone(), intersection_count, adjacent_count, bounds);
+        //bg!(&placement.to_string());
+        //rintln!("Leaving try_placement().\n");
         Some(placement)
     }
 
@@ -228,7 +323,7 @@ impl Puzzle {
         let dir_opposite = direction.opposite().get_variant_name().to_string();
         let mut count = 0;
         for dir in DIRECTIONS.iter()
-                .filter(|dir| dir.get_variant_name().ne(dir_this.as_str()) && dir.get_variant_name().ne(dir_opposite.as_str())) {
+            .filter(|dir| dir.get_variant_name().ne(dir_this.as_str()) && dir.get_variant_name().ne(dir_opposite.as_str())) {
             let offset = dir.get_offset();
             let mut pos = position.clone();
             pos.apply_offset(&offset);
@@ -249,13 +344,20 @@ impl Puzzle {
             if found_char != NO_CHAR && found_char != char {
                 self.print_all();
                 panic!("Trying to place word \"{}\" with {}. Conflicting character at {}: '{}'.",
-                    &word, &placement, &pos, found_char);
+                       &word, &placement, &pos, found_char);
             }
+            // if cell.has_direction_conflict(&placement.direction) {
+            //     panic!("Trying to place word \"{}\" with {}. Direction conflict at {}.",
+            //            &word, &placement, &pos);
+            // }
             let mut add_to_char_map = false;
-            if cell.char != char {
+            if cell.char == char {
+                // placement.intersection_count += 1;
+            } else {
                 cell.char = char;
                 add_to_char_map = true;
             }
+            cell.set_direction_flag(&placement.direction);
             if add_to_char_map {
                 let char_map_entry = self.char_map.entry(char).or_insert(vec![]);
                 char_map_entry.push(pos.clone());
@@ -329,13 +431,50 @@ impl Cell {
     pub fn new() -> Self {
         Self {
             char: NO_CHAR,
+            has_n_s: false,
+            has_ne_sw: false,
+            has_e_w: false,
+            has_se_nw: false
         }
     }
+
+    pub fn has_direction_conflict(&self, direction: &Direction) -> bool {
+        match direction {
+            Direction::N | Direction::S => self.has_n_s,
+            Direction::NE | Direction::SW => self.has_ne_sw,
+            Direction::E | Direction::W => self.has_e_w,
+            Direction::SE | Direction::NW => self.has_se_nw,
+        }
+    }
+
+    pub fn set_direction_flag(&mut self, direction: &Direction) {
+        match direction {
+            Direction::N | Direction::S => self.has_n_s = true,
+            Direction::NE | Direction::SW => self.has_ne_sw = true,
+            Direction::E | Direction::W => self.has_e_w = true,
+            Direction::SE | Direction::NW => self.has_se_nw = true,
+        }
+    }
+
+    /*
+    pub fn get_remaining_directions(&self) -> Vec<Direction> {
+        let mut list = vec![];
+        if !self.has_n_s { list.push(Direction::N); }
+        if !self.has_ne_sw { list.push(Direction::NE); }
+        if !self.has_e_w { list.push(Direction::E); }
+        if !self.has_se_nw { list.push(Direction::SE); }
+        if !self.has_n_s { list.push(Direction::S); }
+        if !self.has_ne_sw { list.push(Direction::SW); }
+        if !self.has_e_w { list.push(Direction::W); }
+        if !self.has_se_nw { list.push(Direction::NW); }
+        list
+    }
+     */
 }
 
 impl Display for Cell {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        write!(f, "[Cell: char = '{}']", self.char)
+        write!(f, "[Cell: char = '{}'; has_n_s = {}; has_ne_sw = {}; has_e_w = {}; has_se_nw = {}]", self.char, self.has_n_s, self.has_ne_sw, self.has_e_w, self.has_se_nw)
     }
 }
 
@@ -449,6 +588,13 @@ impl Bounds {
     }
 
     #[inline]
+    fn get_midpoint(&self) -> Position {
+        let x = self.top_left.x + ((self.bottom_right.x - self.top_left.x) / 2);
+        let y = self.top_left.y + ((self.bottom_right.y - self.top_left.y) / 2);
+        Position::new(x, y)
+    }
+
+    #[inline]
     pub fn apply_position(&mut self, position: &Position) {
         self.top_left.x = self.top_left.x.min(position.x);
         self.bottom_right.x = self.bottom_right.x.max(position.x);
@@ -459,6 +605,9 @@ impl Bounds {
     fn invariant(&self) {
         assert!(self.get_x_min() <= self.get_x_max(), "In {}, x_min ({}) > x_max ({}).", self, self.get_x_min(), self.get_x_max());
         assert!(self.get_y_min() <= self.get_y_max(), "In {}, y_min ({}) > y_max ({}).", self, self.get_y_min(), self.get_y_max());
+        // let x_size = (self.x_max() - self.x_min()) + 1;
+        // let y_size = (self.y_max() - self.y_min()) + 1;
+        // assert_eq!(x_size, y_size, "Non-square bounds: x_size = {}; y_size = {}; {}", x_size, y_size, self);
     }
 }
 
