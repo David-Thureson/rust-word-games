@@ -30,6 +30,23 @@ pub const WORDS_1: [&str; 10] = [
     "vanish",
 ];
 
+pub const WORDS_2: [&str; 2] = [
+    "classify",
+    "escape",
+];
+
+pub const WORDS_3: [&str; 2] = [
+    "dog",
+    "owner",
+];
+
+// One word has no shared characters with others.
+pub const WORDS_4: [&str; 3] = [
+    "dog",
+    "owner",
+    "lazy",
+];
+
 pub const ALL_SECOND_GRADE: [&str; 75] = [
     "amaze",
     "amusing",

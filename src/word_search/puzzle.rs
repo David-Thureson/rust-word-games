@@ -7,9 +7,11 @@ use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter};
 use itertools::Itertools;
 
-const GRID_SIZE_MAX: usize = 30;
+const PUZZLE_SIZE_MAX: usize = 30;
+const FIELD_SIZE_MULT: usize = 2;
 const CREATE_SECONDS_MAX: usize = 10;
 const NO_CHAR: char = '-';
+const DIRECTIONS: [Direction; 8] = [Direction::N, Direction::NE, Direction::E, Direction::SE, Direction::S, Direction::SW, Direction::W, Direction::NW];
 
 type Grid = Vec<Vec<Cell>>;
 type Offset = [isize; 2];
@@ -18,13 +20,12 @@ type Offset = [isize; 2];
 pub struct Puzzle {
     pub words: Vec<String>,
     pub grid: Grid,
-    pub size: usize,
     pub bounds: Bounds,
     pub placements: BTreeMap<String, Placement>,
     pub char_map: BTreeMap<char, Vec<Position>>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Cell {
     char: char,
     has_n_s: bool,
@@ -33,27 +34,27 @@ pub struct Cell {
     has_se_nw: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Placement {
     pub position: Position,
     pub direction: Direction,
     pub intersection_count: usize,
-    pub size_required: usize,
+    pub bounds: Bounds,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Position {
     x: usize,
     y: usize,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Bounds {
     pub top_left: Position,
     pub bottom_right: Position,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Direction {
     N,
     NE,
@@ -70,15 +71,14 @@ impl Puzzle {
         debug_assert!(!words.is_empty());
         let words = words.iter().map(|word| word.trim().to_lowercase()).collect::<Vec<_>>();
         let size = words.iter().map(|word| word.len()).max().unwrap();
-        debug_assert!(size <= GRID_SIZE_MAX);
-        let x_max = GRID_SIZE_MAX + (size / 2);
+        debug_assert!(size <= PUZZLE_SIZE_MAX);
+        let x_max = PUZZLE_SIZE_MAX + (size / 2);
         let x_min = x_max - (size - 1);
         let y_max = x_max;
         let y_min = x_min;
         Self {
             words,
             grid: Self::create_grid(),
-            size,
             bounds: Bounds::new(Position::new(x_min, y_min), Position::new(x_max, y_max)),
             placements: Default::default(),
             char_map: Default::default(),
@@ -86,7 +86,7 @@ impl Puzzle {
     }
 
     fn create_grid() -> Grid {
-        let grid_size = GRID_SIZE_MAX * 2;
+        let grid_size = Self::get_field_size();
         let mut grid = Vec::with_capacity(grid_size);
         for _y in 0..grid_size {
             let mut row = Vec::with_capacity(grid_size);
@@ -104,11 +104,13 @@ impl Puzzle {
         let start_time = Instant::now();
         let mut best_puzzle = None;
         let mut best_size = usize::max_value();
+        let mut sizes = vec![];
         loop {
             let mut puzzle = Self::new(words);
             puzzle.create();
             puzzle.print_all();
-            let puzzle_size = puzzle.size;
+            let puzzle_size = puzzle.bounds.get_size();
+            sizes.push(puzzle_size);
             if puzzle_size < best_size {
             // let new_is_better = best_puzzle.map_or(true, |best_puzzle: Puzzle| best_puzzle.size > puzzle.size);
             // let new_is_better = true;
@@ -125,6 +127,8 @@ impl Puzzle {
                 break;
             }
         }
+        sizes.sort();
+        dbg!(sizes);
         best_puzzle
     }
 
@@ -153,22 +157,21 @@ impl Puzzle {
             Direction::W => Position::new(self.bounds.get_x_max(), midpoint.y),
             Direction::NW => Position::new(self.bounds.get_x_max(),self.bounds.get_y_max()),
         };
-        let placement = Placement::new(position, direction, 0, word.len());
+        let placement = Placement::new(position, direction, 0, self.bounds.clone());
         self.apply_word_placement(word, placement);
     }
 
     fn place_word(&mut self, word: String) {
+
+        /*
         // First try to place the word on one or more intersections with existing words.
         let mut placements = vec![];
         for (char_index, char) in word.chars().enumerate() {
             if let Some(positions) = self.char_map.get(&char) {
                 // This is a list of positions where this character already appears on the puzzle.
                 for position in positions.iter() {
-                    let cell = self.get_cell(position);
-                    // Try all of the directions that are still available from this cell. For 
-                    // instance if the cell already has a word running N/S and another running E/W,
-                    // then the remaining directions would be the four diagonals.
-                    for direction in cell.get_remaining_directions().iter() {
+                    // let cell = self.get_cell(position);
+                    for direction in DIRECTIONS.iter() {
                         if let Some(placement) = self.try_placement(&word, char_index, position, direction) {
                             placements.push(placement);
                         }
@@ -176,54 +179,119 @@ impl Puzzle {
                 }
             }
         }
+
+        if !placements.is_empty() {
+
+            // Keep the prospective placements with the most intersections.
+            let intersection_count_min = placements.iter().map(|placement| placement.intersection_count).min().unwrap();
+            let intersection_count_max = placements.iter().map(|placement| placement.intersection_count).max().unwrap();
+            if intersection_count_min != intersection_count_max {
+                placements = placements.drain_filter(|placement| placement.intersection_count == intersection_count_max).collect();
+            }
+            debug_assert!(!placements.is_empty());
+
+            // Of the remaining prospective placements, keep the ones with the smallest required size.
+            if placements.len() > 1 {
+                let size_required_min = placements.iter().map(|placement| placement.bounds.get_size()).min().unwrap();
+                placements = placements.drain_filter(|placement| placement.bounds.get_size() == size_required_min).collect();
+                debug_assert!(!placements.is_empty());
+            }
+
+            if placements.len() > 1 {
+                placements.shuffle(&mut thread_rng());
+            }
+
+            self.apply_word_placement(word, placements.remove(0));
+
+        } else {
+
+         */
+            // The intersections didn't work, meaning this word does not share any characters with
+            // existing words. So try all possible placements.
+            let mut placements = vec![];
+            for x in self.bounds.get_x_min()..=self.bounds.get_x_max() {
+                for y in self.bounds.get_y_min()..=self.bounds.get_y_max() {
+                    let position = Position::new(x, y);
+                    for direction in DIRECTIONS.iter() {
+                        if let Some(placement) = self.try_placement(&word, 0, &position, direction) {
+                            placements.push(placement);
+                        }
+                    }
+                }
+            }
+            if placements.len() > 1 {
+                let size_required_min = placements.iter().map(|placement| placement.bounds.get_size()).min().unwrap();
+                placements = placements.drain_filter(|placement| placement.bounds.get_size() == size_required_min).collect();
+                debug_assert!(!placements.is_empty());
+            }
+            if placements.len() > 1 {
+                placements.shuffle(&mut thread_rng());
+            }
+            self.apply_word_placement(word, placements.remove(0));
+        // }
     }
     
     fn try_placement(&self, word: &String, char_index: usize, position: &Position, direction: &Direction) -> Option<Placement> {
-        /*
-            let offset = direction.get_offset();
-            let mut pos = position.back_to_word_start(char_index);
-            for char in word.chars() {
-                let cell = self.get_cell_mut(&pos);
-                if cell.char != NO_CHAR && cell.char != char {
-                    panic!("Trying to place word \"{}\" with {}. Conflicting character at {}: '{}'.",
-                           &word, &placement, &pos, cell.char);
-                }
-                if cell.has_direction_conflict(&placement.direction) {
-                    panic!("Trying to place word \"{}\" with {}. Direction conflict at {}.",
-                           &word, &placement, &pos);
-                }
-                let mut add_to_char_map = false;
-                if cell.char == char {
-                    // placement.intersection_count += 1;
-                } else {
-                    cell.char = char;
-                    add_to_char_map = true;
-                }
-                cell.set_direction_flag(&placement.direction);
-                if add_to_char_map {
-                    let char_map_entry = self.char_map.entry(char).or_insert(vec![]);
-                    char_map_entry.push(pos.clone());
-                }
-                pos.apply_offset(&offset);
+        //rintln!("\nStarting try_placement().");
+        //bg!(word, char_index, position.to_string(), direction.to_string());
+        let mut intersection_count = 0;
+        let mut bounds = self.bounds.clone();
+        let position_new_word = position.back_to_word_start_optional(char_index, direction, Self::get_field_size());
+        if position_new_word.is_none() {
+            return None;
+        }
+        let position_new_word = position_new_word.unwrap();
+        let mut pos = position_new_word.clone();
+        //bg!(&pos.to_string());
+        if !self.is_placement_on_grid(word.len(), &pos, direction) {
+            return None;
+        }
+        let offset = direction.get_offset();
+        for char in word.chars() {
+            let cell = self.get_cell(&pos);
+            if cell.char != NO_CHAR && cell.char != char {
+                // There's already a character in this cell and it doesn't match the character in
+                // the new word.
+                return None;
             }
-            self.placements.insert(word, placement);
-        */
-        None
+            if cell.char == char {
+                intersection_count += 1;
+            }
+            bounds.apply_position(&pos);
+            pos.apply_offset(&offset);
+        }
+        let placement = Placement::new(position_new_word, direction.clone(), intersection_count, bounds);
+        //bg!(&placement.to_string());
+        //rintln!("Leaving try_placement().\n");
+        Some(placement)
     }
-    
+
+    fn is_placement_on_grid(&self, word_length: usize, position: &Position, direction: &Direction) -> bool {
+        let word_length = word_length as isize;
+        let field_size = Self::get_field_size();
+        let offset = direction.get_offset();
+        let x_end = position.x as isize + (word_length * offset[0]);
+        let y_end = position.y as isize + (word_length * offset[1]);
+        position.x < field_size && x_end >= 0 && x_end < field_size as isize
+            && position.y < field_size && y_end >= 0 && y_end < field_size as isize
+    }
+
     fn apply_word_placement(&mut self, word: String, placement: Placement) {
         let offset = placement.direction.get_offset();
         let mut pos = placement.position.clone();
         for char in word.chars() {
+            self.bounds.apply_position(&pos);
             let cell = self.get_cell_mut(&pos);
-            if cell.char != NO_CHAR && cell.char != char {
+            let found_char = cell.char;
+            if found_char != NO_CHAR && found_char != char {
+                self.print_all();
                 panic!("Trying to place word \"{}\" with {}. Conflicting character at {}: '{}'.",
-                    &word, &placement, &pos, cell.char);
+                    &word, &placement, &pos, found_char);
             }
-            if cell.has_direction_conflict(&placement.direction) {
-                panic!("Trying to place word \"{}\" with {}. Direction conflict at {}.",
-                       &word, &placement, &pos);
-            }
+            // if cell.has_direction_conflict(&placement.direction) {
+            //     panic!("Trying to place word \"{}\" with {}. Direction conflict at {}.",
+            //            &word, &placement, &pos);
+            // }
             let mut add_to_char_map = false;
             if cell.char == char {
                 // placement.intersection_count += 1;
@@ -255,6 +323,10 @@ impl Puzzle {
 
     pub fn get_char_xy(&self, x: usize, y: usize) -> char {
         self.grid[y][x].char
+    }
+
+    pub fn get_field_size() -> usize {
+        PUZZLE_SIZE_MAX * FIELD_SIZE_MULT
     }
 
     pub fn get_description_line(&self) -> String {
@@ -325,7 +397,8 @@ impl Cell {
             Direction::SE | Direction::NW => self.has_se_nw = true,
         }
     }
-    
+
+    /*
     pub fn get_remaining_directions(&self) -> Vec<Direction> {
         let mut list = vec![];
         if !self.has_n_s { list.push(Direction::N); }
@@ -337,7 +410,8 @@ impl Cell {
         if !self.has_e_w { list.push(Direction::W); }
         if !self.has_se_nw { list.push(Direction::NW); }
         list
-    } 
+    }
+     */
 }
 
 impl Display for Cell {
@@ -347,26 +421,26 @@ impl Display for Cell {
 }
 
 impl Placement {
-    pub fn new(position: Position, direction: Direction, intersection_count: usize, size_required: usize) -> Self {
+    pub fn new(position: Position, direction: Direction, intersection_count: usize, bounds: Bounds) -> Self {
         Self {
             position,
             direction,
             intersection_count,
-            size_required
+            bounds,
         }
     }
 }
 
 impl Display for Placement {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        write!(f, "[Placement: position = '{}'; direction = {}; intersection_count = {}, size_required = {}]", self.position, self.direction, self.intersection_count, self.size_required)
+        write!(f, "[Placement: position = '{}'; direction = {}; intersection_count = {}; {}]", self.position, self.direction, self.intersection_count, self.bounds)
     }
 }
 
 impl Position {
     pub fn new(x: usize, y: usize) -> Self {
-        assert!(x < GRID_SIZE_MAX * 2);
-        assert!(y < GRID_SIZE_MAX * 2);
+        assert!(x < PUZZLE_SIZE_MAX * FIELD_SIZE_MULT);
+        assert!(y < PUZZLE_SIZE_MAX * FIELD_SIZE_MULT);
         Self {
             x,
             y
@@ -378,15 +452,31 @@ impl Position {
         self.x = (self.x as isize + offset[0]) as usize;
         self.y = (self.y as isize + offset[1]) as usize;
     }
-    
+
     pub fn back_to_word_start(&self, char_index: usize, direction: &Direction) -> Self {
         // We're starting at the proposed intersection of a new word with an existing word at some
         // character in the new word. We need to return the position of the first character of the
         // new word.
         let offset = direction.get_offset();
-        let x = (self.x as isize + (char_index as isize * offset[0])) as usize;
-        let y = (self.y as isize + (char_index as isize * offset[1])) as usize;
+        let x = (self.x as isize - (char_index as isize * offset[0])) as usize;
+        let y = (self.y as isize - (char_index as isize * offset[1])) as usize;
         Self::new(x, y)
+    }
+
+    pub fn back_to_word_start_optional(&self, char_index: usize, direction: &Direction, field_size: usize) -> Option<Self> {
+        // We're starting at the proposed intersection of a new word with an existing word at some
+        // character in the new word. We need to return the position of the first character of the
+        // new word.
+        let char_index = char_index as isize;
+        let field_size = field_size as isize;
+        let offset = direction.get_offset();
+        let x = self.x as isize - (char_index * offset[0]);
+        let y = self.y as isize - (char_index * offset[1]);
+        if x > 0 && x < field_size && y > 0 && y < field_size {
+            Some(Self::new(x as usize, y as usize))
+        } else {
+            None
+        }
     }
 }
 
@@ -479,17 +569,7 @@ impl Direction {
 
     pub fn random() -> Self {
         let index = thread_rng().gen_range(0..8);
-        match index {
-            0 => Direction::N,
-            1 => Direction::NE,
-            2 => Direction::E,
-            3 => Direction::SE,
-            4 => Direction::S,
-            5 => Direction::SW,
-            6 => Direction::W,
-            7 => Direction::NW,
-            _ => unreachable!(),
-        }
+        DIRECTIONS[index].clone()
     }
 
 }
@@ -519,5 +599,7 @@ pub fn vec_str_to_strings(list: &Vec<&str>) -> Vec<String> {
 }
 
 pub fn main() {
-    Puzzle::find_best_puzzle(&slice_str_to_strings(&word_list::WORDS_1.to_vec()));
+    // let words = word_list::WORDS_1;
+    let words = word_list::ALL_SECOND_GRADE;
+    Puzzle::find_best_puzzle(&slice_str_to_strings(&words.to_vec()));
 }
