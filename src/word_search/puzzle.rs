@@ -1,3 +1,4 @@
+use crate::*;
 use super::*;
 
 use rand::{thread_rng, Rng};
@@ -11,6 +12,7 @@ const FIELD_SIZE_MULT: usize = 2;
 const NO_CHAR: char = '-';
 const DIRECTIONS: [Direction; 8] = [Direction::N, Direction::NE, Direction::E, Direction::SE, Direction::S, Direction::SW, Direction::W, Direction::NW];
 const ASCII_A_LOWERCASE: u8 = 97;
+const PRIORITIZE_INTERSECTIONS: bool = true;
 
 type Grid = Vec<Vec<Cell>>;
 type Offset = [isize; 2];
@@ -110,30 +112,27 @@ impl Puzzle {
 
     pub fn find_best_puzzle(words: &Vec<String>, expansion: f32, directions: Option<Vec<Direction>>, try_count_max: usize) -> Self {
         let mut try_count = 1;
-        let mut best_puzzle = None;
-        let mut best_size = usize::max_value();
-        let mut sizes = vec![];
+        let mut puzzles = vec![];
         loop {
             let mut puzzle = Self::new(words, expansion);
             if let Some(ref directions) = directions {
                 puzzle.directions = directions.clone();
             }
             puzzle.create();
-            puzzle.print_puzzle();
-            let puzzle_size = puzzle.bounds.get_size();
-            sizes.push(puzzle_size);
-            if puzzle_size < best_size {
-                best_puzzle = Some(puzzle);
-                best_size = puzzle_size;
-            }
+            //puzzle.print_puzzle();
+            puzzle.print_all();
+            puzzles.push(puzzle);
             try_count += 1;
             if try_count > try_count_max {
                 break;
             }
         }
-        sizes.sort();
-        dbg!(sizes);
-        best_puzzle.unwrap()
+        if PRIORITIZE_INTERSECTIONS {
+            puzzles.sort_by(|a, b| a.get_intersection_score().cmp(&b.get_intersection_score()).reverse());
+        } else {
+            puzzles.sort_by(|a, b| a.bounds.get_size().cmp(&b.bounds.get_size()));
+        }
+        puzzles.remove(0)
     }
 
     fn create(&mut self) {
@@ -160,26 +159,35 @@ impl Puzzle {
         }
         let mut chosen_placement_index = 0;
         if placements.len() > 1 {
-            // Set the size rankings. The smallest sizes go first and get the smallest rank
-            // numbers.
-            placements.shuffle(&mut thread_rng());
-            placements.sort_by(|a, b| a.bounds.get_size().cmp(&b.bounds.get_size()));
-            placements.iter_mut().enumerate().for_each(|(i, placement)| placement.size_rank = i);
 
-            // Set the adjacent count rankings. The _highest_ adjacent counts go first and get
-            // the smallest rank numbers.
             placements.shuffle(&mut thread_rng());
-            placements.sort_by(|a, b| a.adjacent_count.cmp(&b.adjacent_count).reverse());
-            placements.iter_mut().enumerate().for_each(|(i, placement)| placement.adjacent_rank = i);
 
-            // Sort by the combined ranks.
-            placements.shuffle(&mut thread_rng());
-            placements.sort_by(|a, b| (a.size_rank + a.adjacent_rank).cmp(&(b.size_rank + &b.adjacent_rank)));
+            if PRIORITIZE_INTERSECTIONS {
 
-            // Choose an entry from the top of the list (self.expansion is 0.0, as compact as
-            // passible), the end of the list (self.expansion is 1.0, as loose as possible), or
-            // somewhere in between.
-            chosen_placement_index = ((placements.len() as f32 - 1.0) * self.expansion).floor() as usize;
+                placements.sort_by(|a, b| a.get_intersection_score().cmp(&b.get_intersection_score()).reverse());
+
+            } else {
+
+                // Set the size rankings. The smallest sizes go first and get the smallest rank
+                // numbers.
+                placements.sort_by(|a, b| a.bounds.get_size().cmp(&b.bounds.get_size()));
+                placements.iter_mut().enumerate().for_each(|(i, placement)| placement.size_rank = i);
+
+                // Set the adjacent count rankings. The _highest_ adjacent counts go first and get
+                // the smallest rank numbers.
+                placements.shuffle(&mut thread_rng());
+                placements.sort_by(|a, b| a.adjacent_count.cmp(&b.adjacent_count).reverse());
+                placements.iter_mut().enumerate().for_each(|(i, placement)| placement.adjacent_rank = i);
+
+                // Sort by the combined ranks.
+                placements.shuffle(&mut thread_rng());
+                placements.sort_by(|a, b| (a.size_rank + a.adjacent_rank).cmp(&(b.size_rank + &b.adjacent_rank)));
+
+                // Choose an entry from the top of the list (self.expansion is 0.0, as compact as
+                // passible), the end of the list (self.expansion is 1.0, as loose as possible), or
+                // somewhere in between.
+                chosen_placement_index = ((placements.len() as f32 - 1.0) * self.expansion).floor() as usize;
+            }
         }
         self.apply_word_placement(word, placements.remove(chosen_placement_index));
     }
@@ -295,8 +303,17 @@ impl Puzzle {
         PUZZLE_SIZE_MAX * FIELD_SIZE_MULT
     }
 
+    fn get_intersection_score(&self) -> usize {
+        self.placements.values().map(|placement| placement.get_intersection_score()).sum()
+    }
+
     pub fn get_description_line(&self) -> String {
-        format!("Puzzle: word count = {}; size = {}; {}; placement count = {}", self.words.len(), self.bounds.get_size(), &self.bounds, self.placements.len())
+        format!("Puzzle: word count = {}; size = {}; {}; placement count = {}, intersection score = {}",
+                fc(self.words.len()),
+                fc(self.bounds.get_size()),
+                &self.bounds,
+                fc(self.placements.len()),
+                fc(self.get_intersection_score()))
     }
 
     pub fn random_fill_optional(&mut self) {
@@ -397,14 +414,24 @@ impl Placement {
             bounds,
         }
     }
+
+    fn get_intersection_score(&self) -> usize {
+        if self.intersection_count == 0 {
+            0
+        } else {
+            2_u32.pow(self.intersection_count as u32 - 1) as usize
+        }
+    }
 }
 
 impl Display for Placement {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        write!(f, "[Placement: position = '{}'; direction = {}; intersection_count = {}; size_rank = {}; adjacent_rank = {}; {}]",
+        write!(f, "[Placement: position = '{}'; direction = {}; intersection_count = {}; size_rank = {}; adjacent_rank = {}; intersection score = {}; {}]",
                self.position, self.direction, self.intersection_count,
-               util::format::format_count(self.size_rank),
-               util::format::format_count(self.adjacent_rank), self.bounds)
+               fc(self.size_rank),
+               fc(self.adjacent_rank),
+               fc(self.get_intersection_score()),
+               self.bounds)
     }
 }
 
@@ -443,7 +470,7 @@ impl Position {
 
 impl Display for Position {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        write!(f, "({}, {})", self.x, self.y)
+        write!(f, "({}, {})", fc(self.x), fc(self.y))
     }
 }
 
@@ -505,7 +532,7 @@ impl Bounds {
 
 impl Display for Bounds {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        write!(f, "[Bounds: {}-{}; size = {}]", self.top_left, self.bottom_right, self.get_size())
+        write!(f, "[Bounds: {}-{}; size = {}]", self.top_left, self.bottom_right, fc(self.get_size()))
     }
 }
 
@@ -581,13 +608,15 @@ pub fn main() {
     // let words = word_list::WORDS_1;
     // let words = word_list::WORDS_4;
     let words = word_list::ALL_SECOND_GRADE;
-    let expansion = 0.3;
+    let expansion = 0.2;
     let directions = None;
-    let try_count_max = 1;
+    let try_count_max = 100;
     // let directions = Some(vec![Direction::E, Direction::S]);
     // let directions = Some(vec![Direction::E, Direction::SE, Direction::S]);
     // let directions = Some(vec![Direction::NE, Direction::E, Direction::SE, Direction::S]);
     // let directions = Some(vec![Direction::NW]);
     let mut puzzle = Puzzle::find_best_puzzle(&slice_str_to_strings(&words.to_vec()), expansion, directions, try_count_max);
+    puzzle.print_all();
     puzzle.print_for_excel(ExcelStyle::Reveal);
+    puzzle.print_for_excel(ExcelStyle::Density);
 }
