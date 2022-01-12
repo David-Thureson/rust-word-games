@@ -1,5 +1,5 @@
-pub mod puzzle;
 pub use puzzle::*;
 
-pub mod word_list;
-pub use word_list::*;
+pub use crate::word_list::*;
+
+pub mod puzzle;

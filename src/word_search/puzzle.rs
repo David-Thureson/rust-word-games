@@ -1,5 +1,4 @@
 use crate::*;
-use super::*;
 
 use rand::{thread_rng, Rng};
 use rand::seq::SliceRandom;
@@ -12,7 +11,7 @@ const FIELD_SIZE_MULT: usize = 2;
 const NO_CHAR: char = '-';
 const DIRECTIONS: [Direction; 8] = [Direction::N, Direction::NE, Direction::E, Direction::SE, Direction::S, Direction::SW, Direction::W, Direction::NW];
 const ASCII_A_LOWERCASE: u8 = 97;
-const PRIORITIZE_INTERSECTIONS: bool = true;
+const PRIORITIZE_INTERSECTIONS: bool = false;
 
 type Grid = Vec<Vec<Cell>>;
 type Offset = [isize; 2];
@@ -591,30 +590,22 @@ impl Display for Direction {
     }
 }
 
-pub fn slice_str_to_strings(list: &[&str]) -> Vec<String> {
-    list.iter().map(|x| x.to_string()).collect()
-}
-
-pub fn vec_str_to_strings(list: &Vec<&str>) -> Vec<String> {
-    list.iter().map(|x| x.to_string()).collect()
-}
-
 pub fn random_char() -> char {
     let ascii = thread_rng().gen_range(ASCII_A_LOWERCASE..ASCII_A_LOWERCASE + 26);
     ascii as char
 }
 
 pub fn main() {
-    // let words = word_list::WORDS_1;
+    let words = word_list::WORDS_1;
     // let words = word_list::WORDS_4;
-    let words = word_list::ALL_SECOND_GRADE;
+    // let words = word_list::ALL_SECOND_GRADE;
     let expansion = 0.2;
-    let directions = None;
-    let try_count_max = 100;
+    // let directions = None;
     // let directions = Some(vec![Direction::E, Direction::S]);
-    // let directions = Some(vec![Direction::E, Direction::SE, Direction::S]);
+    let directions = Some(vec![Direction::E, Direction::SE, Direction::S]);
     // let directions = Some(vec![Direction::NE, Direction::E, Direction::SE, Direction::S]);
     // let directions = Some(vec![Direction::NW]);
+    let try_count_max = 10;
     let mut puzzle = Puzzle::find_best_puzzle(&slice_str_to_strings(&words.to_vec()), expansion, directions, try_count_max);
     puzzle.print_all();
     puzzle.print_for_excel(ExcelStyle::Reveal);
